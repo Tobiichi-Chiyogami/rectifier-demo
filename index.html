@@ -38,7 +38,7 @@
 <div class="container">
   <div class="left">
     <div class="panel">
-      <canvas id="circuit" width="760" height="280"></canvas>
+      <canvas id="circuit" width="760" height="320"></canvas>
     </div>
     <div class="panel">
       <canvas id="wave" width="760" height="260"></canvas>
@@ -133,110 +133,199 @@ function simulate() {
   return { tArr, vinArr, vrectArr, voutArr, vavg, vpp, totalT, Vm };
 }
 
-// ====== 绘制电路图 ======
+// ====== 绘制电路图（菱形全桥，紧凑版）======
 function drawCircuit(ctx, conducting) {
   const W = ctx.canvas.width, H = ctx.canvas.height;
   ctx.clearRect(0, 0, W, H);
-
-  ctx.strokeStyle = "#6c7086";
-  ctx.lineWidth = 2;
-  ctx.font = "13px sans-serif";
-  ctx.fillStyle = "#cdd6f4";
   ctx.textAlign = "center";
 
-  const ax = 80, ay = H / 2;
+  const wireColor   = "#6c7086";
+  const sourceColor = "#f38ba8";
+  const bridgeColor = "#89b4fa";
+  const diodeOn     = "#a6e3a1";
+  const diodeOff    = "#7f849c";
+  const capColor    = "#a6e3a1";
+  const resColor    = "#f9e2af";
+  const dimColor    = "#9399b2";
+
+  const cy = H / 2;
+
+  // ---------- 布局（紧凑）----------
+  const acX = 80, acY = cy;
+
+  const bridgeCX = 300;
+  const bridgeCY = cy;
+  const Rr = 70;   // 菱形半径（比之前略小）
+
+  const top    = { x: bridgeCX,     y: bridgeCY - Rr };
+  const bottom = { x: bridgeCX,     y: bridgeCY + Rr };
+  const left   = { x: bridgeCX - Rr, y: bridgeCY };
+  const right  = { x: bridgeCX + Rr, y: bridgeCY };
+
+  const mTL = { x: (top.x + left.x) / 2,  y: (top.y + left.y) / 2 };
+  const mTR = { x: (top.x + right.x) / 2, y: (top.y + right.y) / 2 };
+  const mBL = { x: (bottom.x + left.x) / 2,  y: (bottom.y + left.y) / 2 };
+  const mBR = { x: (bottom.x + right.x) / 2, y: (bottom.y + right.y) / 2 };
+
+  // 输出母线：离菱形上下角只有 40px
+  const outTopY = top.y - 40;
+  const outBotY = bottom.y + 40;
+  const capMidY = (outTopY + outBotY) / 2;
+
+  const capX = 480;
+  const resX = 640;
+
+  // AC 下方绕行线的 y 坐标：放在下母线稍下方，但不出画布
+  const acLowerY = outBotY + 20;
+
+  // ---------- AC 源 ----------
+  ctx.strokeStyle = sourceColor;
+  ctx.lineWidth = 2;
   ctx.beginPath();
-  ctx.arc(ax, ay, 26, 0, Math.PI * 2);
-  ctx.strokeStyle = "#f38ba8";
+  ctx.arc(acX, acY, 26, 0, Math.PI * 2);
   ctx.stroke();
+
   ctx.beginPath();
-  for (let i = -12; i <= 12; i += 1) {
-    const x = ax + i;
-    const y = ay - Math.sin(i / 12 * Math.PI) * 8;
+  for (let i = -12; i <= 12; i++) {
+    const x = acX + i;
+    const y = acY - Math.sin(i / 12 * Math.PI) * 8;
     i === -12 ? ctx.moveTo(x, y) : ctx.lineTo(x, y);
   }
   ctx.stroke();
-  ctx.fillStyle = "#f38ba8";
-  ctx.fillText("AC", ax, ay + 45);
-  ctx.fillStyle = "#cdd6f4";
-  ctx.fillText(`${params.Vm}V / ${params.f}Hz`, ax, ay + 62);
 
-  const bx = 300, by = H / 2, d = 60;
-  const nodes = {
-    top:    { x: bx, y: by - d },
-    bottom: { x: bx, y: by + d },
-    left:   { x: bx - d, y: by },
-    right:  { x: bx + d, y: by },
-  };
-  ctx.strokeStyle = "#89b4fa";
+  ctx.fillStyle = sourceColor;
+  ctx.font = "600 13px sans-serif";
+  ctx.fillText("AC", acX, acY + 46);
+  ctx.fillStyle = dimColor;
+  ctx.font = "12px sans-serif";
+  ctx.fillText(`${params.Vm}V / ${params.f}Hz`, acX, acY + 64);
+
+  // ---------- 菱形四条边 ----------
+  ctx.strokeStyle = bridgeColor;
   ctx.lineWidth = 2;
   ctx.beginPath();
-  ctx.moveTo(nodes.top.x, nodes.top.y);
-  ctx.lineTo(nodes.right.x, nodes.right.y);
-  ctx.lineTo(nodes.bottom.x, nodes.bottom.y);
-  ctx.lineTo(nodes.left.x, nodes.left.y);
+  ctx.moveTo(top.x, top.y);       ctx.lineTo(right.x, right.y);
+  ctx.lineTo(bottom.x, bottom.y); ctx.lineTo(left.x, left.y);
   ctx.closePath();
   ctx.stroke();
 
-  const diodes = [nodes.top, nodes.right, nodes.bottom, nodes.left];
-  ctx.fillStyle = conducting ? "#a6e3a1" : "#6c7086";
-  ctx.font = "12px sans-serif";
-  diodes.forEach(dd => {
+  // ---------- 二极管符号 ----------
+  const drawDiode = (x, y, angle, on) => {
+    const s = 10;
+    ctx.save();
+    ctx.translate(x, y);
+    ctx.rotate(angle);
+
+    const col = on ? diodeOn : diodeOff;
+
     ctx.beginPath();
-    ctx.arc(dd.x, dd.y, 6, 0, Math.PI * 2);
+    ctx.moveTo(-s, -s);
+    ctx.lineTo(-s,  s);
+    ctx.lineTo( s,  0);
+    ctx.closePath();
+    ctx.fillStyle = col;
+    ctx.fill();
+
+    ctx.beginPath();
+    ctx.moveTo(s, -s);
+    ctx.lineTo(s,  s);
+    ctx.lineWidth = 2.5;
+    ctx.strokeStyle = col;
+    ctx.stroke();
+
+    ctx.restore();
+  };
+
+  // 左上边、右上边、左下边、右下边
+  drawDiode(mTL.x, mTL.y, -Math.PI / 4,     conducting);
+  drawDiode(mTR.x, mTR.y, -3 * Math.PI / 4, conducting);
+  drawDiode(mBL.x, mBL.y, -Math.PI / 4,     conducting);
+  drawDiode(mBR.x, mBR.y, -3 * Math.PI / 4, conducting);
+
+  // 菱形四个角圆点
+  ctx.fillStyle = bridgeColor;
+  [top, bottom, left, right].forEach(p => {
+    ctx.beginPath();
+    ctx.arc(p.x, p.y, 3.5, 0, Math.PI * 2);
     ctx.fill();
   });
-  ctx.fillStyle = "#89b4fa";
-  ctx.font = "13px sans-serif";
-  ctx.fillText("全桥整流 D1~D4", bx, by + d + 40);
 
-  ctx.strokeStyle = "#6c7086";
+  // 桥标签
+  ctx.fillStyle = bridgeColor;
+  ctx.font = "600 13px sans-serif";
+  ctx.fillText("全桥整流 D1~D4", bridgeCX, bottom.y + 25);
+
+  // ---------- AC → 菱形左边角 ----------
+  ctx.strokeStyle = wireColor;
+  ctx.lineWidth = 2;
   ctx.beginPath();
-  ctx.moveTo(ax + 26, ay);
-  ctx.lineTo(nodes.left.x, nodes.left.y);
-  ctx.stroke();
-  ctx.beginPath();
-  ctx.moveTo(ax, ay + 26);
-  ctx.lineTo(ax, by + d + 20);
-  ctx.lineTo(nodes.bottom.x, by + d + 20);
-  ctx.lineTo(nodes.bottom.x, nodes.bottom.y);
+  ctx.moveTo(acX + 26, acY);
+  ctx.lineTo(left.x, left.y);
   ctx.stroke();
 
-  const lx = 580;
+  // AC → 菱形右边角（从 AC 底端出发，走下方绕行，抬高一些不出画布）
   ctx.beginPath();
-  ctx.moveTo(nodes.right.x, nodes.right.y);
-  ctx.lineTo(lx, nodes.right.y);
-  ctx.lineTo(lx, by + d + 20);
-  ctx.lineTo(nodes.bottom.x, by + d + 20);
+  ctx.moveTo(acX, acY + 26);
+  ctx.lineTo(acX, acLowerY);
+  ctx.lineTo(right.x, acLowerY);
+  ctx.lineTo(right.x, right.y);
   ctx.stroke();
 
-  ctx.fillStyle = "#f9e2af";
-  ctx.fillRect(lx - 8, by - 30, 16, 60);
-  ctx.fillStyle = "#cdd6f4";
-  ctx.fillText(`R=${params.R}Ω`, lx + 50, by);
+  // ---------- 菱形上角 → 上母线 ----------
   ctx.beginPath();
-  ctx.moveTo(nodes.right.x, nodes.right.y);
-  ctx.lineTo(lx, nodes.right.y);
+  ctx.moveTo(top.x, top.y);
+  ctx.lineTo(top.x, outTopY);
+  ctx.lineTo(resX, outTopY);
   ctx.stroke();
 
-  const cx = 480;
+  // ---------- 菱形下角 → 下母线 ----------
   ctx.beginPath();
-  ctx.moveTo(cx, nodes.right.y);
-  ctx.lineTo(cx, by - 40);
-  ctx.moveTo(cx, by + 40);
-  ctx.lineTo(cx, by + d + 20);
+  ctx.moveTo(bottom.x, bottom.y);
+  ctx.lineTo(bottom.x, outBotY);
+  ctx.lineTo(resX, outBotY);
   ctx.stroke();
+
+  // ---------- 滤波电容 ----------
+  ctx.strokeStyle = wireColor;
+  ctx.lineWidth = 2;
   ctx.beginPath();
-  ctx.moveTo(cx - 18, by - 40);
-  ctx.lineTo(cx + 18, by - 40);
-  ctx.moveTo(cx - 18, by + 40);
-  ctx.lineTo(cx + 18, by + 40);
-  ctx.strokeStyle = "#a6e3a1";
-  ctx.lineWidth = 3;
+  ctx.moveTo(capX, outTopY);
+  ctx.lineTo(capX, capMidY - 8);
+  ctx.moveTo(capX, capMidY + 8);
+  ctx.lineTo(capX, outBotY);
   ctx.stroke();
-  ctx.fillStyle = "#a6e3a1";
-  ctx.font = "13px sans-serif";
-  ctx.fillText(`C=${(params.C*1e6).toFixed(0)}μF`, cx, by + 75);
+
+  ctx.strokeStyle = capColor;
+  ctx.lineWidth = 3.5;
+  ctx.beginPath();
+  ctx.moveTo(capX - 22, capMidY - 8);
+  ctx.lineTo(capX + 22, capMidY - 8);
+  ctx.moveTo(capX - 22, capMidY + 8);
+  ctx.lineTo(capX + 22, capMidY + 8);
+  ctx.stroke();
+
+  ctx.fillStyle = capColor;
+  ctx.font = "600 13px sans-serif";
+  ctx.fillText(`C=${(params.C*1e6).toFixed(0)}μF`, capX, outBotY + 20);
+
+  // ---------- 负载电阻 ----------
+  ctx.strokeStyle = wireColor;
+  ctx.lineWidth = 2;
+  ctx.beginPath();
+  ctx.moveTo(resX, outTopY);
+  ctx.lineTo(resX, capMidY - 28);
+  ctx.moveTo(resX, capMidY + 28);
+  ctx.lineTo(resX, outBotY);
+  ctx.stroke();
+
+  ctx.fillStyle = resColor;
+  ctx.fillRect(resX - 13, capMidY - 28, 26, 56);
+
+  ctx.fillStyle = resColor;
+  ctx.font = "600 13px sans-serif";
+  ctx.textAlign = "left";
+  ctx.fillText(`R=${params.R}Ω`, resX + 22, capMidY + 5);
+  ctx.textAlign = "center";
 }
 
 // ====== 绘制波形 ======
@@ -319,7 +408,7 @@ function update() {
   document.getElementById("ripple").textContent = (ripple * 100).toFixed(2) + " %";
 }
 
-// ====== 绑定控件 ======
+// ====== 绑定滑块 ======
 function bindSlider(sliderId, labelId, key, fmt, scale = 1) {
   const el = document.getElementById(sliderId);
   const label = document.getElementById(labelId);
@@ -332,7 +421,6 @@ function bindSlider(sliderId, labelId, key, fmt, scale = 1) {
 
   el.addEventListener("input", apply);
   el.addEventListener("change", apply);
-
   apply();
 }
 

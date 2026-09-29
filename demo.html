@@ -1,0 +1,347 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>全桥整流电路仿真器</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font-family: "Segoe UI", "Microsoft YaHei", sans-serif;
+    background: #1e1e2e; color: #cdd6f4; padding: 20px;
+  }
+  h1 { font-size: 20px; margin-bottom: 16px; color: #89b4fa; }
+  .container { display: flex; gap: 20px; flex-wrap: wrap; }
+  .left { flex: 1 1 520px; }
+  .right { flex: 0 0 280px; }
+  .panel {
+    background: #313244; border-radius: 10px; padding: 16px;
+    margin-bottom: 16px;
+  }
+  canvas { width: 100%; border-radius: 8px; background: #181825; display: block; }
+  .param { margin-bottom: 14px; }
+  .param label { display: flex; justify-content: space-between; font-size: 13px; margin-bottom: 4px; }
+  .param .val { color: #a6e3a1; font-weight: 600; }
+  .param input[type=range] {
+    width: 100%; accent-color: #89b4fa;
+    user-select: none; -webkit-user-select: none; touch-action: none;
+  }
+  .stats { font-size: 13px; line-height: 1.9; }
+  .stats span { color: #f9e2af; font-weight: 600; }
+  .legend { display: flex; gap: 16px; font-size: 12px; margin-top: 8px; }
+  .legend i { display: inline-block; width: 14px; height: 3px; margin-right: 5px; vertical-align: middle; }
+</style>
+</head>
+<body>
+
+<h1>⚡ 全桥整流电路仿真器</h1>
+
+<div class="container">
+  <div class="left">
+    <div class="panel">
+      <canvas id="circuit" width="760" height="280"></canvas>
+    </div>
+    <div class="panel">
+      <canvas id="wave" width="760" height="260"></canvas>
+      <div class="legend">
+        <span><i style="background:#f38ba8"></i>输入交流</span>
+        <span><i style="background:#fab387"></i>整流后（脉动）</span>
+        <span><i style="background:#a6e3a1"></i>电容滤波后</span>
+      </div>
+    </div>
+  </div>
+
+  <div class="right">
+    <div class="panel">
+      <div class="param">
+        <label>输入电压幅值 Vm <span class="val" id="vmVal">12 V</span></label>
+        <input type="range" id="vm" min="1" max="30" step="0.5" value="12">
+      </div>
+      <div class="param">
+        <label>输入频率 f <span class="val" id="fVal">50 Hz</span></label>
+        <input type="range" id="f" min="10" max="120" step="1" value="50">
+      </div>
+      <div class="param">
+        <label>负载电阻 R <span class="val" id="rVal">100 Ω</span></label>
+        <input type="range" id="rSlider" min="10" max="1000" step="10" value="100">
+      </div>
+      <div class="param">
+        <label>滤波电容 C <span class="val" id="cVal">470 μF</span></label>
+        <input type="range" id="c" min="0" max="2000" step="10" value="470">
+      </div>
+    </div>
+
+    <div class="panel stats">
+      <div>输出平均电压：<span id="vavg">—</span></div>
+      <div>纹波峰峰值：<span id="vpp">—</span></div>
+      <div>纹波系数：<span id="ripple">—</span></div>
+    </div>
+  </div>
+</div>
+
+<script>
+// ====== 参数 ======
+const params = { Vm: 12, f: 50, R: 100, C: 470e-6 };
+const Vd = 0.7;
+const CYCLES = 6;
+const STEPS_PER_CYCLE = 400;
+
+// ====== 仿真核心 ======
+function simulate() {
+  const { Vm, f, R, C } = params;
+  const T = 1 / f;
+  const totalT = CYCLES * T;
+  const dt = T / STEPS_PER_CYCLE;
+  const N = Math.floor(totalT / dt);
+
+  const tArr = [], vinArr = [], vrectArr = [], voutArr = [];
+  let Vc = 0;
+
+  for (let i = 0; i < N; i++) {
+    const t = i * dt;
+    const vin = Vm * Math.sin(2 * Math.PI * f * t);
+    const vabs = Math.abs(vin);
+    let vrect;
+
+    if (C <= 0) {
+      vrect = Math.max(vabs - 2 * Vd, 0);
+      Vc = vrect;
+    } else {
+      if (vabs > Vc + 2 * Vd) {
+        Vc = vabs - 2 * Vd;
+      } else {
+        Vc = Vc * Math.exp(-dt / (R * C));
+      }
+      vrect = Math.max(vabs - 2 * Vd, 0);
+    }
+
+    tArr.push(t);
+    vinArr.push(vin);
+    vrectArr.push(vrect);
+    voutArr.push(Vc);
+  }
+
+  const startIdx = Math.floor(N * (CYCLES - 2) / CYCLES);
+  let sum = 0, max = -Infinity, min = Infinity;
+  for (let i = startIdx; i < N; i++) {
+    sum += voutArr[i];
+    if (voutArr[i] > max) max = voutArr[i];
+    if (voutArr[i] < min) min = voutArr[i];
+  }
+  const vavg = sum / (N - startIdx);
+  const vpp = max - min;
+
+  return { tArr, vinArr, vrectArr, voutArr, vavg, vpp, totalT, Vm };
+}
+
+// ====== 绘制电路图 ======
+function drawCircuit(ctx, conducting) {
+  const W = ctx.canvas.width, H = ctx.canvas.height;
+  ctx.clearRect(0, 0, W, H);
+
+  ctx.strokeStyle = "#6c7086";
+  ctx.lineWidth = 2;
+  ctx.font = "13px sans-serif";
+  ctx.fillStyle = "#cdd6f4";
+  ctx.textAlign = "center";
+
+  const ax = 80, ay = H / 2;
+  ctx.beginPath();
+  ctx.arc(ax, ay, 26, 0, Math.PI * 2);
+  ctx.strokeStyle = "#f38ba8";
+  ctx.stroke();
+  ctx.beginPath();
+  for (let i = -12; i <= 12; i += 1) {
+    const x = ax + i;
+    const y = ay - Math.sin(i / 12 * Math.PI) * 8;
+    i === -12 ? ctx.moveTo(x, y) : ctx.lineTo(x, y);
+  }
+  ctx.stroke();
+  ctx.fillStyle = "#f38ba8";
+  ctx.fillText("AC", ax, ay + 45);
+  ctx.fillStyle = "#cdd6f4";
+  ctx.fillText(`${params.Vm}V / ${params.f}Hz`, ax, ay + 62);
+
+  const bx = 300, by = H / 2, d = 60;
+  const nodes = {
+    top:    { x: bx, y: by - d },
+    bottom: { x: bx, y: by + d },
+    left:   { x: bx - d, y: by },
+    right:  { x: bx + d, y: by },
+  };
+  ctx.strokeStyle = "#89b4fa";
+  ctx.lineWidth = 2;
+  ctx.beginPath();
+  ctx.moveTo(nodes.top.x, nodes.top.y);
+  ctx.lineTo(nodes.right.x, nodes.right.y);
+  ctx.lineTo(nodes.bottom.x, nodes.bottom.y);
+  ctx.lineTo(nodes.left.x, nodes.left.y);
+  ctx.closePath();
+  ctx.stroke();
+
+  const diodes = [nodes.top, nodes.right, nodes.bottom, nodes.left];
+  ctx.fillStyle = conducting ? "#a6e3a1" : "#6c7086";
+  ctx.font = "12px sans-serif";
+  diodes.forEach(dd => {
+    ctx.beginPath();
+    ctx.arc(dd.x, dd.y, 6, 0, Math.PI * 2);
+    ctx.fill();
+  });
+  ctx.fillStyle = "#89b4fa";
+  ctx.font = "13px sans-serif";
+  ctx.fillText("全桥整流 D1~D4", bx, by + d + 40);
+
+  ctx.strokeStyle = "#6c7086";
+  ctx.beginPath();
+  ctx.moveTo(ax + 26, ay);
+  ctx.lineTo(nodes.left.x, nodes.left.y);
+  ctx.stroke();
+  ctx.beginPath();
+  ctx.moveTo(ax, ay + 26);
+  ctx.lineTo(ax, by + d + 20);
+  ctx.lineTo(nodes.bottom.x, by + d + 20);
+  ctx.lineTo(nodes.bottom.x, nodes.bottom.y);
+  ctx.stroke();
+
+  const lx = 580;
+  ctx.beginPath();
+  ctx.moveTo(nodes.right.x, nodes.right.y);
+  ctx.lineTo(lx, nodes.right.y);
+  ctx.lineTo(lx, by + d + 20);
+  ctx.lineTo(nodes.bottom.x, by + d + 20);
+  ctx.stroke();
+
+  ctx.fillStyle = "#f9e2af";
+  ctx.fillRect(lx - 8, by - 30, 16, 60);
+  ctx.fillStyle = "#cdd6f4";
+  ctx.fillText(`R=${params.R}Ω`, lx + 50, by);
+  ctx.beginPath();
+  ctx.moveTo(nodes.right.x, nodes.right.y);
+  ctx.lineTo(lx, nodes.right.y);
+  ctx.stroke();
+
+  const cx = 480;
+  ctx.beginPath();
+  ctx.moveTo(cx, nodes.right.y);
+  ctx.lineTo(cx, by - 40);
+  ctx.moveTo(cx, by + 40);
+  ctx.lineTo(cx, by + d + 20);
+  ctx.stroke();
+  ctx.beginPath();
+  ctx.moveTo(cx - 18, by - 40);
+  ctx.lineTo(cx + 18, by - 40);
+  ctx.moveTo(cx - 18, by + 40);
+  ctx.lineTo(cx + 18, by + 40);
+  ctx.strokeStyle = "#a6e3a1";
+  ctx.lineWidth = 3;
+  ctx.stroke();
+  ctx.fillStyle = "#a6e3a1";
+  ctx.font = "13px sans-serif";
+  ctx.fillText(`C=${(params.C*1e6).toFixed(0)}μF`, cx, by + 75);
+}
+
+// ====== 绘制波形 ======
+function drawWave(ctx, data) {
+  const W = ctx.canvas.width, H = ctx.canvas.height;
+  const pad = { l: 50, r: 20, t: 20, b: 30 };
+  const plotW = W - pad.l - pad.r;
+  const plotH = H - pad.t - pad.b;
+  ctx.clearRect(0, 0, W, H);
+
+  const yMax = data.Vm * 1.15;
+  const yMin = -yMax;
+  const totalT = data.totalT;
+
+  const xToPx = t => pad.l + (t / totalT) * plotW;
+  const yToPx = v => pad.t + (yMax - v) / (yMax - yMin) * plotH;
+
+  ctx.strokeStyle = "#313244";
+  ctx.lineWidth = 1;
+  ctx.beginPath();
+  for (let i = 0; i <= 4; i++) {
+    const y = pad.t + i * plotH / 4;
+    ctx.moveTo(pad.l, y); ctx.lineTo(W - pad.r, y);
+  }
+  for (let i = 0; i <= 6; i++) {
+    const x = pad.l + i * plotW / 6;
+    ctx.moveTo(x, pad.t); ctx.lineTo(x, H - pad.b);
+  }
+  ctx.stroke();
+
+  const y0 = yToPx(0);
+  ctx.strokeStyle = "#585b70";
+  ctx.beginPath();
+  ctx.moveTo(pad.l, y0); ctx.lineTo(W - pad.r, y0);
+  ctx.stroke();
+
+  ctx.fillStyle = "#9399b2";
+  ctx.font = "11px sans-serif";
+  ctx.textAlign = "right";
+  ctx.fillText(`+${yMax.toFixed(1)}V`, pad.l - 6, pad.t + 10);
+  ctx.fillText("0V", pad.l - 6, y0 + 4);
+  ctx.fillText(`-${yMax.toFixed(1)}V`, pad.l - 6, H - pad.b);
+  ctx.textAlign = "center";
+  ctx.fillText("时间 (ms)", W / 2, H - 8);
+  ctx.textAlign = "left";
+  ctx.fillText("0", pad.l, H - pad.b + 14);
+  ctx.fillText((totalT * 1000).toFixed(1), W - pad.r - 20, H - pad.b + 14);
+
+  const drawLine = (arr, color, width, dashed=false) => {
+    ctx.strokeStyle = color;
+    ctx.lineWidth = width;
+    ctx.setLineDash(dashed ? [5,4] : []);
+    ctx.beginPath();
+    for (let i = 0; i < arr.length; i++) {
+      const x = xToPx(data.tArr[i]);
+      const y = yToPx(arr[i]);
+      i === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y);
+    }
+    ctx.stroke();
+    ctx.setLineDash([]);
+  };
+
+  drawLine(data.vinArr,   "#f38ba8", 1.5, true);
+  drawLine(data.vrectArr, "#fab387", 1.5);
+  drawLine(data.voutArr,  "#a6e3a1", 2.5);
+}
+
+// ====== 主更新 ======
+function update() {
+  const data = simulate();
+
+  drawCircuit(document.getElementById("circuit").getContext("2d"), false);
+  drawWave(document.getElementById("wave").getContext("2d"), data);
+
+  const vavg = data.vavg;
+  const vpp = data.vpp;
+  const ripple = vavg > 0.01 ? (vpp / vavg) : 0;
+  document.getElementById("vavg").textContent = vavg.toFixed(2) + " V";
+  document.getElementById("vpp").textContent = vpp.toFixed(3) + " V";
+  document.getElementById("ripple").textContent = (ripple * 100).toFixed(2) + " %";
+}
+
+// ====== 绑定控件 ======
+function bindSlider(sliderId, labelId, key, fmt, scale = 1) {
+  const el = document.getElementById(sliderId);
+  const label = document.getElementById(labelId);
+
+  const apply = () => {
+    params[key] = parseFloat(el.value) * scale;
+    if (label) label.textContent = fmt(params[key]);
+    update();
+  };
+
+  el.addEventListener("input", apply);
+  el.addEventListener("change", apply);
+
+  apply();
+}
+
+bindSlider("vm",      "vmVal", "Vm", v => v.toFixed(1) + " V");
+bindSlider("f",       "fVal",  "f",  v => v.toFixed(0) + " Hz");
+bindSlider("rSlider", "rVal",  "R",  v => v.toFixed(0) + " Ω");
+bindSlider("c",       "cVal",  "C",  v => (v * 1e6).toFixed(0) + " μF", 1e-6);
+
+update();
+</script>
+</body>
+</html>
